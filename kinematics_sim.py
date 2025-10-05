@@ -15,12 +15,12 @@ import csv
 
 # ========================== CONFIG ==========================
 LOAD_FROM_CSV = True
-CSV_PATH = "ackermann_traj.csv"   # CSV with columns: t, xdot_g, ydot_g, phidot
+CSV_PATH = "ackermann_kinematics_traj.csv"   # CSV with columns: t, xdot_g, ydot_g, phidot
 T_TOTAL = 12.0
 DT = 0.02
 
-save_path = "ackermann_sim_s_curve.mp4"
-fps = int(1000 / 20)  # same as interval=20 in FuncAnimation
+save_path = "ackermann_kinematics_curve.mp4"
+fps = int(15)  # same as interval=20 in FuncAnimation
 
 # ==================== CSV LOADER ============================
 def load_commands_from_csv(csv_path: str):
@@ -305,7 +305,7 @@ def run():
     # print(f"Saving animation to {save_path} ...")
     # writer = FFMpegWriter(fps=fps, codec="libx264", bitrate=1800)
     # ani.save(save_path, writer=writer)
-    # print("✅ MP4 saved successfully!")
+    # print("MP4 saved successfully!")
 
     plt.show()
 
