@@ -1,358 +1,491 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+from dataclasses import dataclass
 
 # ============================================================
-# Vehicle parameters
+# Helpers
 # ============================================================
-L = 0.35          # wheelbase [m]
-t = 0.28          # track width [m]
-lf = 0.18         # CG -> front axle [m]
-lr = L - lf       # CG -> rear axle  [m]
-
-m  = 8.0          # mass [kg]
-Iz = 0.45         # yaw inertia [kg*m^2]
-g  = 9.81
-
-# Tire model parameters (linear + saturation)
-Cf = 250.0        # cornering stiffness front per wheel [N/rad]
-Cr = 280.0        # cornering stiffness rear  per wheel [N/rad]
-mu = 0.9          # friction coefficient
-
-# Longitudinal "drive" model
-Cdrag = 0.6
-vx_min = 0.05
-
-# ============================================================
-# Simulation settings & Squircle Generation
-# ============================================================
-dt = 0.01
-T = 20.0          # Runtime [s] (adjusted to allow full lap)
-N = int(T/dt)
-tt = np.linspace(0, T, N)
-
-v_x_des = 0.8     # Target speed [m/s]
-Kvx = 30.0        # Cruise control gain
-Fx_max_total = 35.0
-
-# --- SQUIRCLE PARAMETERS ---
-R_sq = 2.0        # "Radius" (half-width) of the shape
-n_order = 4.0     # 4.0 = standard squircle
-laps = 1.0        # How many laps to drive in T seconds
-period = T / laps
-
-# Generate the parameter 'theta' over time
-# We shift by -pi/2 so we start at (0, -R) driving East, or 0 to start at (R,0) driving North.
-# Let's start at theta=0 => Position (R, 0), Heading North.
-theta_traj = np.linspace(0, 2 * np.pi * laps, N)
-
-# Parametric Squircle Equations:
-# x = R * sgn(cos t) * |cos t|^(2/n)
-# y = R * sgn(sin t) * |sin t|^(2/n)
-p = 2.0 / n_order
-xs = R_sq * np.sign(np.cos(theta_traj)) * np.abs(np.cos(theta_traj)) ** p
-ys = R_sq * np.sign(np.sin(theta_traj)) * np.abs(np.sin(theta_traj)) ** p
-
-# Compute Derivatives for Curvature (Kappa)
-dx_dt = np.gradient(xs, dt)
-dy_dt = np.gradient(ys, dt)
-ddx_dt = np.gradient(dx_dt, dt)
-ddy_dt = np.gradient(dy_dt, dt)
-
-# Curvature k = (x'y'' - y'x'') / (x'^2 + y'^2)^1.5
-numerator = dx_dt * ddy_dt - dy_dt * ddx_dt
-denominator = (dx_dt**2 + dy_dt**2)**1.5
-kappa = numerator / (denominator + 1e-6)
-
-# Calculate Steering Angle from Curvature (Kinematic Bicycle Approx)
-# delta = arctan(L * k)
-delta_profile = np.arctan(L * kappa)
-
-# Clamp steering to physical limits
-delta_max = np.deg2rad(25.0)
-delta_profile = np.clip(delta_profile, -delta_max, delta_max)
-
-# ============================================================
-# Drawing geometry
-# ============================================================
-body_overhang_rear  = 0.05
-body_overhang_front = 0.05
-wheel_len, wheel_wid = 0.16, 0.06
-
-# Wheel positions in body frame (origin at CG)
-p_FL = np.array([+lf, +t/2])
-p_FR = np.array([+lf, -t/2])
-p_RL = np.array([-lr, +t/2])
-p_RR = np.array([-lr, -t/2])
-wheel_pos = np.stack([p_FL, p_FR, p_RL, p_RR], axis=0)
-wheel_names = ["FL", "FR", "RL", "RR"]
-
-# ============================================================
-# Helper functions
-# ============================================================
-def R2(theta):
-    c, s = np.cos(theta), np.sin(theta)
-    return np.array([[c, -s],[s, c]])
-
-def wrap_pi(a):
+def wrap_to_pi(a):
     return (a + np.pi) % (2*np.pi) - np.pi
 
-def ackermann_split(delta, L, t):
-    td = np.tan(delta)
-    if abs(td) < 1e-8:
-        return delta, delta
-    Rmid = L / td
-    # Avoid singular Rmid inside track width
-    if abs(Rmid) <= t/2 + 1e-6:
-        Rmid = np.sign(Rmid) * (t/2 + 1e-6)
-    dFL = np.arctan2(L, Rmid - t/2)
-    dFR = np.arctan2(L, Rmid + t/2)
+def rot2(theta):
+    c, s = np.cos(theta), np.sin(theta)
+    return np.array([[c, -s],
+                     [s,  c]], float)
+
+def clamp(x, lo, hi):
+    return float(np.minimum(np.maximum(x, lo), hi))
+
+# ============================================================
+# Params
+# ============================================================
+@dataclass
+class AckermannParams:
+    # geometry
+    L: float = 0.35      # wheelbase [m]
+    T: float = 0.28      # track width [m]
+    r_w: float = 0.06    # wheel radius [m]
+    Lf: float = 0.175    # CG -> front axle [m]
+    Lr: float = 0.175    # CG -> rear axle [m]
+
+    # rigid body
+    m: float = 12.0      # kg
+    Iz: float = 0.8      # kg*m^2
+
+    # linear damping (body)
+    du: float = 4.0      # N/(m/s)
+    dv: float = 8.0      # N/(m/s)
+    dr: float = 2.0      # N*m/(rad/s)
+
+    # linear tire cornering stiffness (N/rad)
+    Cf: float = 150.0
+    Cr: float = 180.0
+
+    # traction saturation (very simple)
+    mu: float = 0.9
+    g: float = 9.81
+
+    # drawing
+    body_length: float = 0.45
+    body_width:  float = 0.30
+    wheel_length: float = 0.10
+    wheel_width:  float = 0.04
+
+@dataclass
+class SimParams:
+    dt: float = 0.01
+    steer_limit_deg: float = 45.0
+
+# ============================================================
+# Ackermann steering (double-track) from curvature kappa = 1/R
+# ============================================================
+def ackermann_front_steering_from_curvature(kappa, p: AckermannParams, steer_limit_deg=45.0):
+    lim = np.deg2rad(steer_limit_deg)
+    halfT = 0.5 * p.T
+
+    if abs(kappa) < 1e-12:
+        return 0.0, 0.0
+
+    R = 1.0 / kappa
+    Rabs = abs(R)
+    if Rabs <= halfT + 1e-6:
+        Rabs = halfT + 1e-6
+
+    delta_in  = np.arctan(p.L / (Rabs - halfT))
+    delta_out = np.arctan(p.L / (Rabs + halfT))
+
+    sgn = np.sign(kappa)
+    if kappa > 0:     # left: FL inner
+        dFL = sgn * delta_in
+        dFR = sgn * delta_out
+    else:             # right: FR inner
+        dFL = sgn * delta_out
+        dFR = sgn * delta_in
+
+    dFL = clamp(dFL, -lim, lim)
+    dFR = clamp(dFR, -lim, lim)
     return dFL, dFR
 
-def box_corners(center_xy, heading, length, width):
-    l, w = length/2.0, width/2.0
-    local = np.array([[+l,+w],[+l,-w],[-l,-w],[-l,+w],[+l,+w]])
-    return (R2(heading) @ local.T).T + center_xy
+# ============================================================
+# Rigid body matrices: M, C, G, D (BODY frame at CG)
+# ============================================================
+def M_matrix(p: AckermannParams):
+    return np.diag([p.m, p.m, p.Iz])
 
-def body_outline(center_xy, heading):
-    Lb = lf + lr + body_overhang_front + body_overhang_rear
-    x_center = (lf + body_overhang_front - (lr + body_overhang_rear)) / 2.0
-    body_center_R = np.array([x_center, 0.0])
-    return box_corners(center_xy + (R2(heading) @ body_center_R), heading, Lb, t)
+def C_matrix(nu, p: AckermannParams):
+    u, v, r = nu
+    m = p.m
+    return np.array([[0.0, -m*r, 0.0],
+                     [m*r,  0.0, 0.0],
+                     [0.0,  0.0, 0.0]], float)
 
-def clamp_friction(Fx, Fy, Fz, mu):
-    """Friction circle: sqrt(Fx^2 + Fy^2) <= mu*Fz."""
-    Fmax = mu * Fz
-    mag = np.hypot(Fx, Fy)
-    if mag <= Fmax or mag < 1e-12:
-        return Fx, Fy
-    s = Fmax / mag
-    return Fx*s, Fy*s
+def G_vector(_eta, _p: AckermannParams):
+    return np.zeros(3)
+
+def D_matrix(p: AckermannParams):
+    return np.diag([p.du, p.dv, p.dr])
 
 # ============================================================
-# Normal loads (static)
+# Wheel torque -> longitudinal wrench via B(delta)
 # ============================================================
-Fz_front_axle = m * g * (lr / L)
-Fz_rear_axle  = m * g * (lf / L)
-Fz = np.array([
-    0.5 * Fz_front_axle,  # FL
-    0.5 * Fz_front_axle,  # FR
-    0.5 * Fz_rear_axle,   # RL
-    0.5 * Fz_rear_axle,   # RR
-])
+def B_matrix(delta, p: AckermannParams):
+    halfT = 0.5 * p.T
+    pos = {
+        "RL": np.array([-p.Lr, +halfT]),
+        "RR": np.array([-p.Lr, -halfT]),
+        "FL": np.array([+p.Lf, +halfT]),
+        "FR": np.array([+p.Lf, -halfT]),
+    }
+    keys = ["RL","RR","FL","FR"]
+    B = np.zeros((3,4), float)
 
-# ============================================================
-# Explicit matrices for dynamics (BODY coordinates)
-# ============================================================
-M = np.diag([m, m, Iz])  # 3x3
+    for j,k in enumerate(keys):
+        x_i, y_i = pos[k]
+        d = float(delta[k])
+        c = np.cos(d)
+        s = np.sin(d)
+        B[:, j] = np.array([c, s, x_i*s - y_i*c], float) / p.r_w
+    return B
 
-def C_matrix(nu):
-    vx, vy, r = nu
-    return np.array([
-        [0.0,  m*r, 0.0],
-        [-m*r, 0.0, 0.0],
-        [0.0,  0.0, 0.0]
-    ])
-
-def H_i(xi, yi):
-    return np.array([
-        [1.0, 0.0],
-        [0.0, 1.0],
-        [-yi, xi]
-    ])
-
-def Bx_By(wheel_heading):
-    Bx = np.zeros((3, 4))
-    By = np.zeros((3, 4))
-    for i in range(4):
-        xi, yi = wheel_pos[i]
-        Hi = H_i(xi, yi)
-        di = wheel_heading[i]
-        a = np.array([np.cos(di), np.sin(di)]) 
-        b = np.array([-np.sin(di), np.cos(di)])
-        Bx[:, i] = Hi @ a
-        By[:, i] = Hi @ b
-    return Bx, By
+def traction_saturate(Fx, Fy, p: AckermannParams):
+    Fmax = p.mu * p.m * p.g
+    F = np.hypot(Fx, Fy)
+    if F > Fmax and F > 1e-12:
+        s = Fmax / F
+        return Fx*s, Fy*s
+    return Fx, Fy
 
 # ============================================================
-# State initialization
+# Tire lateral forces: linear bicycle model
 # ============================================================
-x   = np.zeros(N)
-y   = np.zeros(N)
-psi = np.zeros(N)
+def tire_wrench_linear(nu, delta_axle, p: AckermannParams, eps_u=0.2):
+    u, v, r = nu
+    u_eff = u if abs(u) > eps_u else (eps_u * np.sign(u) if abs(u) > 1e-6 else eps_u)
 
-vx  = np.zeros(N)
-vy  = np.zeros(N)
-r_yaw = np.zeros(N)
+    alpha_f = np.arctan2(v + p.Lf*r, u_eff) - delta_axle
+    alpha_r = np.arctan2(v - p.Lr*r, u_eff)
 
-# Set Initial State to match the Squircle Start
-vx[0]  = v_x_des
-x[0]   = xs[0]
-y[0]   = ys[0]
+    Fy_f = -p.Cf * alpha_f
+    Fy_r = -p.Cr * alpha_r
 
-# Calculate initial heading from trajectory derivative
-initial_heading = np.arctan2(dy_dt[0], dx_dt[0])
-psi[0] = initial_heading
+    # front force into body frame
+    Fx_f = -Fy_f * np.sin(delta_axle)
+    Fy_fB =  Fy_f * np.cos(delta_axle)
 
-Fx_w = np.zeros((N, 4))
-Fy_w = np.zeros((N, 4))
-alpha_w = np.zeros((N, 4))
-delta_act_log = np.zeros(N)
+    Fx_r = 0.0
+    Fy_rB = Fy_r
 
-# ============================================================
-# Simulation loop
-# ============================================================
-for k in range(N-1):
-    
-    # 1. READ STEERING FROM SQUIRCLE PROFILE
-    delta_act = delta_profile[k]
-    delta_act_log[k] = delta_act
-    v_ref = v_x_des
+    Fx = Fx_f + Fx_r
+    Fy = Fy_fB + Fy_rB
+    Mz = p.Lf * Fy_fB - p.Lr * Fy_rB
 
-    # 2. ACKERMANN GEOMETRY
-    dFL, dFR = ackermann_split(delta_act, L, t)
-    wheel_heading = np.array([dFL, dFR, 0.0, 0.0])
-
-    # 3. LONGITUDINAL CONTROL (Cruise Control)
-    Fx_cmd_total = Kvx * (v_ref - vx[k]) - Cdrag * vx[k]
-    Fx_cmd_total = np.clip(Fx_cmd_total, -Fx_max_total, Fx_max_total)
-    Fx_cmd = np.array([0.0, 0.0, 0.5*Fx_cmd_total, 0.5*Fx_cmd_total]) # RWD
-
-    # 4. TIRE VELOCITIES
-    v_i = np.zeros((4, 2))
-    for i in range(4):
-        xi, yi = wheel_pos[i]
-        v_i[i, 0] = vx[k] - r_yaw[k] * yi
-        v_i[i, 1] = vy[k] + r_yaw[k] * xi
-
-    # 5. TIRE FORCES
-    Fx_i = np.zeros(4)
-    Fy_i = np.zeros(4)
-
-    for i in range(4):
-        vxi = np.sign(v_i[i, 0]) * max(abs(v_i[i, 0]), vx_min)
-        vyi = v_i[i, 1]
-
-        alpha = wrap_pi(wheel_heading[i] - np.arctan2(vyi, vxi))
-        alpha_w[k, i] = alpha
-
-        Cc = Cf if i < 2 else Cr
-        Fy = Cc * alpha
-        Fx = Fx_cmd[i]
-
-        Fx, Fy = clamp_friction(Fx, Fy, Fz[i], mu)
-        Fx_i[i] = Fx
-        Fy_i[i] = Fy
-
-    Fx_w[k, :] = Fx_i
-    Fy_w[k, :] = Fy_i
-
-    # 6. DYNAMICS SOLVER
-    nu = np.array([vx[k], vy[k], r_yaw[k]])
-    Bx, By = Bx_By(wheel_heading)
-    tau = (Bx @ Fx_i) + (By @ Fy_i)
-    C_mat = C_matrix(nu)
-    
-    # M * nu_dot + C * nu = tau
-    nu_dot = np.linalg.solve(M, (tau - C_mat @ nu))
-
-    # 7. INTEGRATION
-    vx[k+1]    = vx[k]    + nu_dot[0] * dt
-    vy[k+1]    = vy[k]    + nu_dot[1] * dt
-    r_yaw[k+1] = r_yaw[k] + nu_dot[2] * dt
-
-    # World Kinematics
-    x_dot = vx[k]*np.cos(psi[k]) - vy[k]*np.sin(psi[k])
-    y_dot = vx[k]*np.sin(psi[k]) + vy[k]*np.cos(psi[k])
-    psi_dot = r_yaw[k]
-
-    x[k+1]   = x[k]   + x_dot * dt
-    y[k+1]   = y[k]   + y_dot * dt
-    psi[k+1] = wrap_pi(psi[k] + psi_dot * dt)
-
-# Fill last steps for logging
-delta_act_log[-1] = delta_act_log[-2]
-Fx_w[-1, :] = Fx_w[-2, :]
-Fy_w[-1, :] = Fy_w[-2, :]
+    Fx, Fy = traction_saturate(Fx, Fy, p)
+    return np.array([Fx, Fy, Mz], float), (alpha_f, alpha_r)
 
 # ============================================================
-# Figure 1: Animation
+# Circle command: constant curvature + speed tracking via rear torques
 # ============================================================
-fig_anim, ax_anim = plt.subplots(figsize=(8, 8))
-ax_anim.set_aspect('equal')
-ax_anim.set_title("Squircle Tracking (Dynamic Model)")
-ax_anim.set_xlabel("X [m]")
-ax_anim.set_ylabel("Y [m]")
+def circle_command(p: AckermannParams,
+                   R=6.0,
+                   v_des=4.0,
+                   k_u=60.0,
+                   tau_max=6.0,
+                   steer_limit_deg=45.0):
 
-# Set bounds based on squircle radius
-pad = 1.0
-ax_anim.set_xlim(-R_sq - pad, R_sq + pad)
-ax_anim.set_ylim(-R_sq - pad, R_sq + pad)
+    kappa = 1.0 / R
+    dFL, dFR = ackermann_front_steering_from_curvature(kappa, p, steer_limit_deg=steer_limit_deg)
 
-(trace,) = ax_anim.plot([], [], 'b-', lw=1.5, label="Actual Path")
-(ref_line,) = ax_anim.plot(xs, ys, 'r--', lw=1.5, alpha=0.5, label="Desired Squircle")
+    def cb(_t, nu):
+        u = float(nu[0])
+        Fx_des = k_u * (v_des - u)
+        tau_each = 0.5 * p.r_w * Fx_des
+        tau_each = clamp(tau_each, -tau_max, tau_max)
 
-(body_line,) = ax_anim.plot([], [], 'k-', lw=2)
-(FL_w_line,) = ax_anim.plot([], [], 'k-', lw=3)
-(FR_w_line,) = ax_anim.plot([], [], 'k-', lw=3)
-(RL_w_line,) = ax_anim.plot([], [], 'k-', lw=3)
-(RR_w_line,) = ax_anim.plot([], [], 'k-', lw=3)
-ax_anim.legend(loc="upper right")
+        delta_cmd = {"RL": 0.0, "RR": 0.0, "FL": dFL, "FR": dFR}
+        tau_cmd   = {"RL": tau_each, "RR": tau_each, "FL": 0.0, "FR": 0.0}
+        return delta_cmd, tau_cmd
 
-def update_anim(i):
-    # Only update every n frames to speed up animation render if needed
-    # i = i * 2 
-    if i >= N: return
-    
-    pos = np.array([x[i], y[i]])
-    heading = psi[i]
-    dFL, dFR = ackermann_split(delta_act_log[i], L, t)
-
-    body_poly = body_outline(pos, heading)
-    body_line.set_data(body_poly[:,0], body_poly[:,1])
-
-    Rg = R2(heading)
-    cFL = pos + (Rg @ p_FL)
-    cFR = pos + (Rg @ p_FR)
-    cRL = pos + (Rg @ p_RL)
-    cRR = pos + (Rg @ p_RR)
-
-    FL_poly = box_corners(cFL, heading + dFL, wheel_len, wheel_wid)
-    FR_poly = box_corners(cFR, heading + dFR, wheel_len, wheel_wid)
-    RL_poly = box_corners(cRL, heading,       wheel_len, wheel_wid)
-    RR_poly = box_corners(cRR, heading,       wheel_len, wheel_wid)
-
-    FL_w_line.set_data(FL_poly[:,0], FL_poly[:,1])
-    FR_w_line.set_data(FR_poly[:,0], FR_poly[:,1])
-    RL_w_line.set_data(RL_poly[:,0], RL_poly[:,1])
-    RR_w_line.set_data(RR_poly[:,0], RR_poly[:,1])
-
-    trace.set_data(x[:i+1], y[:i+1])
-    return trace, body_line, FL_w_line, FR_w_line, RL_w_line, RR_w_line
-
-# Decimate frames slightly for smoother realtime viewing if N is huge
-ani = FuncAnimation(fig_anim, update_anim, frames=range(0, N, 4), 
-                    interval=dt*4*1000, blit=True, repeat=False)
+    return cb
 
 # ============================================================
-# Figure 2: States
+# Option C simulator: run until yaw change reaches 2π
 # ============================================================
-fig_st, axs_st = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
-axs_st[0].plot(tt, np.rad2deg(delta_act_log))
-axs_st[0].set_ylabel("Steering [deg]")
-axs_st[0].grid(True)
-axs_st[0].set_title("Control Inputs & Yaw Rate")
+def simulate_dynamics_optionC_until_circle(p: AckermannParams,
+                                           sp: SimParams,
+                                           command_callback,
+                                           yaw_target=2*np.pi,
+                                           max_time=60.0):
+    dt = sp.dt
+    max_steps = int(np.ceil(max_time / dt))
 
-axs_st[1].plot(tt, vx, label="vx")
-axs_st[1].plot(tt, vy, label="vy")
-axs_st[1].set_ylabel("Velocity [m/s]")
-axs_st[1].legend()
-axs_st[1].grid(True)
+    # preallocate (max)
+    t  = np.zeros(max_steps)
+    x  = np.zeros(max_steps)
+    y  = np.zeros(max_steps)
+    th = np.zeros(max_steps)
 
-axs_st[2].plot(tt, r_yaw)
-axs_st[2].set_ylabel("Yaw Rate [rad/s]")
-axs_st[2].set_xlabel("Time [s]")
-axs_st[2].grid(True)
+    u = np.zeros(max_steps)
+    v = np.zeros(max_steps)
+    r = np.zeros(max_steps)
 
-plt.tight_layout()
-plt.show()
+    delta = {k: np.zeros(max_steps) for k in ["RL","RR","FL","FR"]}
+    tau_w = {k: np.zeros(max_steps) for k in ["RL","RR","FL","FR"]}
+
+    tau_long  = np.zeros((max_steps,3))
+    tau_tire  = np.zeros((max_steps,3))
+    tau_total = np.zeros((max_steps,3))
+
+    alpha_f_log = np.zeros(max_steps)
+    alpha_r_log = np.zeros(max_steps)
+
+    M = M_matrix(p)
+    D = D_matrix(p)
+
+    # track accumulated yaw in an "unwrapped" way
+    th_unwrap = 0.0
+    th0 = th[0]
+
+    n = 1
+    for k in range(1, max_steps):
+        t[k] = t[k-1] + dt
+        nu = np.array([u[k-1], v[k-1], r[k-1]], float)
+
+        # commands
+        delta_cmd, tau_cmd = command_callback(t[k-1], nu)
+        for wn in ["RL","RR","FL","FR"]:
+            delta[wn][k-1] = float(delta_cmd[wn])
+            tau_w[wn][k-1] = float(tau_cmd[wn])
+
+        delta_axle = 0.5 * (delta["FL"][k-1] + delta["FR"][k-1])
+
+        # wheel torque wrench
+        del_now = {wn: delta[wn][k-1] for wn in ["RL","RR","FL","FR"]}
+        B = B_matrix(del_now, p)
+        tau_vec = np.array([tau_w["RL"][k-1], tau_w["RR"][k-1],
+                            tau_w["FL"][k-1], tau_w["FR"][k-1]], float)
+        tauB_long = B @ tau_vec
+        tau_long[k-1,:] = tauB_long
+
+        # tire wrench
+        tauB_tire, (af, ar_) = tire_wrench_linear(nu, delta_axle, p)
+        tau_tire[k-1,:] = tauB_tire
+        alpha_f_log[k-1] = af
+        alpha_r_log[k-1] = ar_
+
+        # total wrench
+        tauB = tauB_long + tauB_tire
+        tau_total[k-1,:] = tauB
+
+        # dynamics
+        C = C_matrix(nu, p)
+        G = G_vector(np.array([x[k-1], y[k-1], th[k-1]]), p)
+        rhs = tauB - (C @ nu) - (D @ nu) - G
+        nu_dot = np.linalg.solve(M, rhs)
+
+        u[k] = u[k-1] + nu_dot[0]*dt
+        v[k] = v[k-1] + nu_dot[1]*dt
+        r[k] = r[k-1] + nu_dot[2]*dt
+
+        # kinematics
+        vI = rot2(th[k-1]) @ np.array([u[k-1], v[k-1]], float)
+        x[k]  = x[k-1] + vI[0]*dt
+        y[k]  = y[k-1] + vI[1]*dt
+        th[k] = wrap_to_pi(th[k-1] + r[k-1]*dt)
+
+        # unwrap yaw increment robustly
+        dth = wrap_to_pi(th[k] - th[k-1])
+        th_unwrap += dth
+
+        n = k + 1
+
+        if abs(th_unwrap - th0) >= yaw_target:
+            break
+
+    # finalize last sample copies
+    last = n - 1
+    for wn in ["RL","RR","FL","FR"]:
+        delta[wn][last] = delta[wn][last-1]
+        tau_w[wn][last] = tau_w[wn][last-1]
+    tau_long[last,:]  = tau_long[last-1,:]
+    tau_tire[last,:]  = tau_tire[last-1,:]
+    tau_total[last,:] = tau_total[last-1,:]
+    alpha_f_log[last] = alpha_f_log[last-1]
+    alpha_r_log[last] = alpha_r_log[last-1]
+
+    # trim
+    t = t[:n]; x = x[:n]; y = y[:n]; th = th[:n]
+    u = u[:n]; v = v[:n]; r = r[:n]
+    tau_long = tau_long[:n,:]
+    tau_tire = tau_tire[:n,:]
+    tau_total = tau_total[:n,:]
+    alpha_f_log = alpha_f_log[:n]
+    alpha_r_log = alpha_r_log[:n]
+    for wn in ["RL","RR","FL","FR"]:
+        delta[wn] = delta[wn][:n]
+        tau_w[wn] = tau_w[wn][:n]
+
+    return dict(
+        t=t, x=x, y=y, th=th,
+        u=u, v=v, r=r,
+        delta=delta, tau_w=tau_w,
+        tau_long=tau_long, tau_tire=tau_tire, tau_total=tau_total,
+        alpha_f=alpha_f_log, alpha_r=alpha_r_log,
+        params=p, simparams=sp
+    )
+
+# ============================================================
+# Plotting
+# ============================================================
+def make_plots(sim):
+    t = sim["t"]
+    x,y = sim["x"], sim["y"]
+    u,v,r = sim["u"], sim["v"], sim["r"]
+    delta = sim["delta"]
+    tau_w = sim["tau_w"]
+    tau_long = sim["tau_long"]
+    tau_tire = sim["tau_tire"]
+    tau_total = sim["tau_total"]
+    alpha_f = sim["alpha_f"]
+    alpha_r = sim["alpha_r"]
+
+    fig, axs = plt.subplots(5,1, figsize=(11,14), sharex=True)
+
+    axs[0].plot(x, y)
+    axs[0].set_aspect("equal", adjustable="box")
+    axs[0].set_title("Trajectory (Dynamics + Linear Tire Model) — Circle (stop at 2π yaw)")
+    axs[0].set_ylabel("y [m]")
+    axs[0].grid(True)
+
+    axs[1].plot(t, u, label="u (forward)")
+    axs[1].plot(t, v, label="v (lateral)")
+    axs[1].plot(t, r, label="r (yaw rate)")
+    axs[1].set_ylabel("Body velocities")
+    axs[1].grid(True)
+    axs[1].legend(ncols=3)
+
+    axs[2].plot(t, tau_long[:,0], label="Fx long")
+    axs[2].plot(t, tau_long[:,1], label="Fy long")
+    axs[2].plot(t, tau_long[:,2], label="Mz long")
+    axs[2].plot(t, tau_tire[:,0], "--", label="Fx tire")
+    axs[2].plot(t, tau_tire[:,1], "--", label="Fy tire")
+    axs[2].plot(t, tau_tire[:,2], "--", label="Mz tire")
+    axs[2].set_ylabel("Wrench parts")
+    axs[2].grid(True)
+    axs[2].legend(ncols=3)
+
+    axs[3].plot(t, tau_total[:,0], label="Fx total")
+    axs[3].plot(t, tau_total[:,1], label="Fy total")
+    axs[3].plot(t, tau_total[:,2], label="Mz total")
+    axs[3].set_ylabel("Total wrench")
+    axs[3].grid(True)
+    axs[3].legend(ncols=3)
+
+    axs[4].plot(t, tau_w["RL"], label="tau_RL")
+    axs[4].plot(t, tau_w["RR"], label="tau_RR")
+    axs[4].plot(t, np.rad2deg(delta["FL"]), "--", label="delta_FL [deg]")
+    axs[4].plot(t, np.rad2deg(delta["FR"]), "--", label="delta_FR [deg]")
+    axs[4].plot(t, np.rad2deg(alpha_f), ":", label="alpha_f [deg]")
+    axs[4].plot(t, np.rad2deg(alpha_r), ":", label="alpha_r [deg]")
+    axs[4].set_ylabel("Torques / angles")
+    axs[4].set_xlabel("time [s]")
+    axs[4].grid(True)
+    axs[4].legend(ncols=3)
+
+    plt.tight_layout()
+    plt.show()
+
+# ============================================================
+# Animation
+# ============================================================
+def animate(sim, interval_ms=20, trail=True):
+    p = sim["params"]
+    t = sim["t"]
+    x,y,th = sim["x"], sim["y"], sim["th"]
+    delta = sim["delta"]
+
+    halfT = 0.5*p.T
+    wheel_body = {
+        "RL": np.array([-p.Lr, +halfT]),
+        "RR": np.array([-p.Lr, -halfT]),
+        "FL": np.array([+p.Lf, +halfT]),
+        "FR": np.array([+p.Lf, -halfT]),
+    }
+
+    fig, ax = plt.subplots(figsize=(9,7))
+    ax.set_aspect("equal", adjustable="box")
+    ax.grid(True)
+    ax.set_title("Ackermann Double-Track Dynamics (Circle, stop at 2π yaw)")
+
+    pad = 1.0
+    ax.set_xlim(np.min(x)-pad, np.max(x)+pad)
+    ax.set_ylim(np.min(y)-pad, np.max(y)+pad)
+
+    body_line, = ax.plot([], [], lw=2)
+    wheel_lines = {k: ax.plot([], [], lw=2)[0] for k in wheel_body}
+    heading_line, = ax.plot([], [], lw=2)
+    trail_line = ax.plot([], [], lw=1)[0] if trail else None
+
+    def rect(center, length, width, ang):
+        Lh, Wh = length/2, width/2
+        pts = np.array([[ Lh,  Wh],
+                        [ Lh, -Wh],
+                        [-Lh, -Wh],
+                        [-Lh,  Wh],
+                        [ Lh,  Wh]], float)
+        R = rot2(ang)
+        ptsW = (R @ pts.T).T + center
+        return ptsW
+
+    def update(i):
+        xi, yi, thi = x[i], y[i], th[i]
+        R = rot2(thi)
+
+        body_center = np.array([xi, yi])
+        bp = rect(body_center, p.body_length, p.body_width, thi)
+        body_line.set_data(bp[:,0], bp[:,1])
+
+        for kname in wheel_body:
+            wp = np.array([xi, yi]) + R @ wheel_body[kname]
+            ang = thi + delta[kname][i] if kname in ["FL","FR"] else thi
+            wpts = rect(wp, p.wheel_length, p.wheel_width, ang)
+            wheel_lines[kname].set_data(wpts[:,0], wpts[:,1])
+
+        head = np.array([xi, yi])
+        tip = head + rot2(thi) @ np.array([0.25, 0.0])
+        heading_line.set_data([head[0], tip[0]], [head[1], tip[1]])
+
+        if trail_line is not None:
+            trail_line.set_data(x[:i+1], y[:i+1])
+
+        artists = [body_line, heading_line] + list(wheel_lines.values())
+        if trail_line is not None:
+            artists.append(trail_line)
+        return artists
+
+    ani = FuncAnimation(fig, update, frames=len(t), interval=interval_ms, blit=True)
+    plt.show()
+    return ani
+
+# ============================================================
+# Main
+# ============================================================
+if __name__ == "__main__":
+    p = AckermannParams(
+        L=0.35, T=0.28, r_w=0.06,
+        Lf=0.175, Lr=0.175,
+        m=12.0, Iz=0.8,
+        du=4.0, dv=8.0, dr=2.0,
+        Cf=150.0, Cr=180.0,
+        mu=0.9
+    )
+    sp = SimParams(dt=0.01, steer_limit_deg=45.0)
+
+    # Your values
+    R_circle = 3.0
+    v_circle = 4.0
+
+    # Command (you can tune k_u and tau_max)
+    cmd = circle_command(
+        p,
+        R=R_circle,
+        v_des=v_circle,
+        k_u=60.0,
+        tau_max=6.0,
+        steer_limit_deg=sp.steer_limit_deg
+    )
+
+    # OPTION C: stop when yaw accumulates 2π (not when "ideal time" elapses)
+    sim = simulate_dynamics_optionC_until_circle(
+        p, sp, cmd,
+        yaw_target=2*np.pi,
+        max_time=60.0
+    )
+
+    ani = animate(sim, interval_ms=20, trail=True)
+
+    print("Saving video...")
+    # ani.save("dynamics_sim_animation.mp4", writer="ffmpeg", fps=60)
+    print("Video saved.")
+
+    make_plots(sim)

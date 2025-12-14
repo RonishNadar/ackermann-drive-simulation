@@ -410,13 +410,17 @@ if __name__ == "__main__":
     p = AckermannParams(L=0.35, T=0.28, r=0.06)
     sp = SimParams(dt=0.02, k_heading=3.0, omega_max=4.0, steer_limit_deg=45.0)
 
-    # Option 1: constant inertial segments (may be infeasible if you also demand rotation)
-    # segs = build_testcase_I("infeasible")
-    # sim = simulate_inertial(segs, p, sp)
-
-    # Option 2 (recommended): proper circle specified in inertial frame as time-varying vx,vy
     segs = build_testcase_I("figure8_like")
     sim = simulate_inertial(segs, p, sp, inertial_callback=figure8_inertial_callback(v=0.3, w=0.35))
 
-    animate(sim, interval_ms=20, trail=True)
+    # 1. Create the animation object
+    ani = animate(sim, interval_ms=20, trail=True)
+
+    # 2. SAVE THE VIDEO HERE ----------------------------------
+    print("Saving video...")
+    ani.save("ackermann_simulation.mp4", writer="ffmpeg", fps=50)
+    print("Video saved.")
+    # ---------------------------------------------------------
+
+    # 3. Show static plots
     make_plots(sim)
