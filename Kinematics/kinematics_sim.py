@@ -48,20 +48,19 @@ def ackermann_wheels_from_vw(v, w, p: AckermannParams, steer_limit_deg=45.0):
     halfT = 0.5 * p.T
     lim = np.deg2rad(steer_limit_deg)
 
+    # --- 1. ACKERMANN STEERING GEOMETRY (Angles) ---
     if abs(w) < 1e-9:
         delta_FL = 0.0
         delta_FR = 0.0
-        v_RL = v_RR = v_FL = v_FR = v
     else:
         R = v / w
         Rabs = abs(R)
-        wabs = abs(w)
-
-        # Guard against impossible geometry when |R| <= T/2
-        # (would imply infinite steering / wheel crossing)
+        
+        # Guard against impossible geometry
         if Rabs <= halfT + 1e-6:
             Rabs = halfT + 1e-6
 
+        # Standard Ackermann formulas
         delta_in_mag  = np.arctan(p.L / (Rabs - halfT))
         delta_out_mag = np.arctan(p.L / (Rabs + halfT))
         sgnw = np.sign(w)
@@ -69,25 +68,58 @@ def ackermann_wheels_from_vw(v, w, p: AckermannParams, steer_limit_deg=45.0):
         delta_in  = sgnw * delta_in_mag
         delta_out = sgnw * delta_out_mag
 
-        if w > 0:   # left turn: FL inner
+        if w > 0:   # left turn
             delta_FL, delta_FR = delta_in, delta_out
-        else:       # right turn: FR inner
+        else:       # right turn
             delta_FL, delta_FR = delta_out, delta_in
 
         delta_FL = clamp(delta_FL, -lim, lim)
         delta_FR = clamp(delta_FR, -lim, lim)
 
-        v_RL = wabs * (Rabs - halfT)
-        v_RR = wabs * (Rabs + halfT)
-        v_FL = wabs * np.sqrt(p.L**2 + (Rabs - halfT)**2)
-        v_FR = wabs * np.sqrt(p.L**2 + (Rabs + halfT)**2)
+    # --- 2. WHEEL VELOCITIES via INVERSE KINEMATICS MATRIX ---
+    # Implements the standard matrix for rolling-without-slipping
+    # [w_fl, w_fr, w_rl, w_rr]^T = (1/r) * M * [vx, vy, w]^T
+    
+    # Precompute trig terms
+    cFL, sFL = np.cos(delta_FL), np.sin(delta_FL)
+    cFR, sFR = np.cos(delta_FR), np.sin(delta_FR)
 
-        sgnv = np.sign(v) if abs(v) > 1e-9 else 1.0
-        v_RL *= sgnv; v_RR *= sgnv; v_FL *= sgnv; v_FR *= sgnv
+    # Construct the Jacobian Matrix (M) from the image
+    # Note: L is p.L, t/2 is halfT
+    # Row 1 (FL): projects body motion onto steered wheel vector
+    row_FL = np.array([cFL, sFL, p.L*sFL - halfT*cFL])
+    
+    # Row 2 (FR): projects body motion onto steered wheel vector
+    row_FR = np.array([cFR, sFR, p.L*sFR + halfT*cFR])
+    
+    # Row 3 (RL): Standard differential drive (left side)
+    row_RL = np.array([1.0, 0.0, -halfT])
+    
+    # Row 4 (RR): Standard differential drive (right side)
+    row_RR = np.array([1.0, 0.0, +halfT])
 
-    v_wheel = {"RL": v_RL, "RR": v_RR, "FL": v_FL, "FR": v_FR}
-    omega_wheel = {k: v_wheel[k] / p.r for k in v_wheel}
+    # Stack into Matrix M (4x3)
+    M = np.vstack([row_FL, row_FR, row_RL, row_RR])
+
+    # Input Vector (Body Velocities)
+    # v_y is 0.0 because the controller enforces the non-holonomic constraint
+    U = np.array([v, 0.0, w])
+
+    # Compute Angular Velocities of Wheels (omega = 1/r * M * U)
+    omegas = (1.0 / p.r) * (M @ U)
+
+    omega_wheel = {
+        "FL": omegas[0],
+        "FR": omegas[1],
+        "RL": omegas[2],
+        "RR": omegas[3]
+    }
+
+    # Convert back to linear speeds (v = omega * r) for plotting/logging
+    v_wheel = {k: omega_wheel[k] * p.r for k in omega_wheel}
+    
     delta = {"RL": 0.0, "RR": 0.0, "FL": delta_FL, "FR": delta_FR}
+    
     return v_wheel, omega_wheel, delta
 
 # =========================
@@ -108,9 +140,6 @@ def build_testcase_I(name="straight"):
         return [SegmentI(18.0, 0.0, 0.0, 0.0)]
 
     if name == "figure8_like":
-        # total time for two full loops (left + right)
-        # each loop approx: 2*pi/|w|
-        # we add a small extra buffer so the 8 closes nicely in discrete dt
         w = 0.35
         Tloop = 2*np.pi/abs(w)
         return [SegmentI(2*Tloop + 0.5, 0.0, 0.0, 0.0)]
@@ -124,19 +153,6 @@ def build_testcase_I(name="straight"):
 # Core: inertial desired -> feasible Ackermann (v, omega)
 # =========================
 def inertial_to_ackermann(vx_I, vy_I, wz_des, theta, sp: SimParams):
-    """
-    Map desired inertial translational velocity (vx_I, vy_I) into a feasible Ackermann command (v, omega).
-
-    Key idea:
-      - Desired heading = atan2(vy_I, vx_I)
-      - Choose omega = wz_des + k * heading_error  (heading-tracking)
-      - Choose v = speed = sqrt(vx_I^2 + vy_I^2)  (always forward speed)
-      - This ensures motion is consistent with no lateral body velocity.
-
-    Also compute infeasibility metric: required lateral body velocity if you tried to follow inertial command exactly:
-      v_B = R_BI(theta) * v_I
-      infeasible = v_y^B
-    """
     v_I = np.array([vx_I, vy_I], float)
     speed = float(np.linalg.norm(v_I))
 
@@ -164,11 +180,6 @@ def inertial_to_ackermann(vx_I, vy_I, wz_des, theta, sp: SimParams):
 # =========================
 def simulate_inertial(segments, p: AckermannParams, sp: SimParams,
                       inertial_callback=None):
-    """
-    If inertial_callback is provided:
-        inertial_callback(t) -> (vx_I, vy_I, wz_des)
-    it overrides segment constant values and can generate "true circle" inertial commands.
-    """
     dt = sp.dt
 
     # build timeline
@@ -375,15 +386,6 @@ def circle_inertial_callback(v=0.3, w=0.35):
     return cb
 
 def figure8_inertial_callback(v=0.3, w=0.35):
-    """
-    Generates an inertial velocity command that traces two circles back-to-back:
-      - First loop: left turn  (omega = +w) for 2*pi/w seconds
-      - Second loop: right turn (omega = -w) for 2*pi/w seconds
-
-    Inertial velocities are time-varying:
-      vx_I = v cos(psi(t)),  vy_I = v sin(psi(t))
-    where psi(t) is an internal "direction angle" that rotates with +/- w.
-    """
     Tloop = 2*np.pi/abs(w)
 
     def cb(t):

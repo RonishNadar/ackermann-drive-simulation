@@ -107,7 +107,7 @@ def D_matrix(p: AckermannParams):
     return np.diag([p.du, p.dv, p.dr])
 
 # ============================================================
-# Wheel torque -> longitudinal wrench via B(delta)
+# Wheel torque -> longitudinal torques via B(delta)
 # ============================================================
 def B_matrix(delta, p: AckermannParams):
     halfT = 0.5 * p.T
@@ -137,7 +137,7 @@ def traction_saturate(Fx, Fy, p: AckermannParams):
     return Fx, Fy
 
 # ============================================================
-# Tire lateral forces: linear bicycle model
+# Tire lateral torques
 # ============================================================
 def tire_wrench_linear(nu, delta_axle, p: AckermannParams, eps_u=0.2):
     u, v, r = nu
@@ -189,7 +189,7 @@ def circle_command(p: AckermannParams,
     return cb
 
 # ============================================================
-# Option C simulator: run until yaw change reaches 2π
+# Simulator: run until yaw change reaches 2π
 # ============================================================
 def simulate_dynamics_optionC_until_circle(p: AckermannParams,
                                            sp: SimParams,
@@ -475,7 +475,7 @@ if __name__ == "__main__":
         steer_limit_deg=sp.steer_limit_deg
     )
 
-    # OPTION C: stop when yaw accumulates 2π (not when "ideal time" elapses)
+    # Stop when yaw accumulates 2π (not when "ideal time" elapses)
     sim = simulate_dynamics_optionC_until_circle(
         p, sp, cmd,
         yaw_target=2*np.pi,
@@ -485,7 +485,7 @@ if __name__ == "__main__":
     ani = animate(sim, interval_ms=20, trail=True)
 
     print("Saving video...")
-    # ani.save("dynamics_sim_animation.mp4", writer="ffmpeg", fps=60)
+    ani.save("dynamics_sim_animation.mp4", writer="ffmpeg", fps=60)
     print("Video saved.")
 
     make_plots(sim)

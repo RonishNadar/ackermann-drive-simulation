@@ -1,29 +1,12 @@
-"""
-Ackermann Double-Track Dynamics + Spline Path Following (Sliding Mode Control)
-+ Stability analysis plots (Lyapunov + reaching condition evidence)
-+ Testing & validation metrics (RMS / max / boundary-layer occupancy)
-
-Run:
-  python smc_ackermann_path_following_stability_validation.py
-
-Dependencies:
-  numpy, matplotlib, scipy
-"""
-
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from dataclasses import dataclass
 
-# ---- SciPy spline ----
 try:
     from scipy.interpolate import CubicSpline
 except Exception as e:
-    raise ImportError(
-        "This script needs scipy for CubicSpline.\n"
-        "Install with: pip install scipy\n"
-        f"Original import error: {e}"
-    )
+    raise ImportError(f"Import error: {e}")
 
 # ============================================================
 # Helpers
@@ -162,7 +145,7 @@ def D_matrix(p: AckermannParams):
     return np.diag([p.du, p.dv, p.dr])
 
 # ============================================================
-# Wheel torque -> wrench via B(delta)
+# Wheel torque -> torques via B(delta)
 # ============================================================
 def B_matrix(delta, p: AckermannParams):
     halfT = 0.5 * p.T
@@ -191,7 +174,7 @@ def traction_saturate(Fx, Fy, p: AckermannParams):
     return Fx, Fy
 
 # ============================================================
-# Tire wrench: linear bicycle model
+# Tire torques
 # ============================================================
 def tire_wrench_linear(nu, delta_axle, p: AckermannParams, eps_u=0.2):
     u, v, r = nu
@@ -343,7 +326,7 @@ def smc_path_controller_spline(path: SplinePath, p: AckermannParams, sp: SimPara
     return cb
 
 # ============================================================
-# Simulator (Option C dynamics) for a fixed time horizon
+# Simulator for a fixed time horizon
 # ============================================================
 def simulate_dynamics(T_total, p: AckermannParams, sp: SimParams, controller_cb):
     dt = sp.dt
@@ -730,9 +713,7 @@ if __name__ == "__main__":
     )
 
     # ===== choose your path =====
-    # waypoints = make_circle_waypoints(R=6.0, N=14, center=(0.0, 0.0)); closed = True
     waypoints = make_figure8_waypoints(a=6.0, b=3.0, N=40); closed = True
-    # waypoints = [(0,0), (10,0), (12,4), (10,8), (0,8), (0,0)]; closed = True
 
     path = SplinePath(waypoints, closed=closed)
     controller = smc_path_controller_spline(path, p, sp, cp)
@@ -747,17 +728,13 @@ if __name__ == "__main__":
     # 1. Capture the animation object in a variable 'ani'
     ani = animate(sim, path=path, interval_ms=20, trail=True, show_path=True)
 
-    # 2. Save the video
-    # NOTE: You need FFmpeg installed on your system for 'ffmpeg' writer.
-    # fps=50 matches your interval_ms=20 (1000ms / 20ms = 60 fps)
+    # 2. Save the video as MP4
     print("Saving video to 'controller_sim_animation.mp4'...")
     try:
         ani.save("controller_sim_animation.mp4", writer="ffmpeg", fps=60)
         print("Video saved successfully!")
     except Exception as e:
         print(f"Could not save MP4 (do you have FFmpeg installed?). Error: {e}")
-        
-        # Fallback: Save as GIF (uses Pillow, usually installed with matplotlib)
         print("Attempting to save as GIF instead...")
         ani.save("controller_sim_animation.gif", writer="pillow", fps=60)
         print("GIF saved successfully!")
