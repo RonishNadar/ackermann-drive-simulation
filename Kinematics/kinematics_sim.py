@@ -265,7 +265,7 @@ def make_plots(sim):
     v_used, w_used = sim["v_used"], sim["w_used"]
     vyB_required = sim["vyB_required"]
 
-    v_w, delta = sim["v_w"], sim["delta"]
+    om_w, delta = sim["om_w"], sim["delta"] # Modified to get om_w
 
     fig, axs = plt.subplots(4,1, figsize=(10,12), sharex=True)
 
@@ -289,16 +289,23 @@ def make_plots(sim):
     axs[2].grid(True)
     axs[2].legend(ncols=3)
 
-    axs[3].plot(t, v_w["RL"], label="v_RL")
-    axs[3].plot(t, v_w["RR"], label="v_RR")
-    axs[3].plot(t, v_w["FL"], label="v_FL")
-    axs[3].plot(t, v_w["FR"], label="v_FR")
-    axs[3].plot(t, np.rad2deg(delta["FL"]), "--", label="delta_FL [deg]")
-    axs[3].plot(t, np.rad2deg(delta["FR"]), "--", label="delta_FR [deg]")
-    axs[3].set_ylabel("Wheels")
+    # --- MODIFIED PANEL 4 ---
+    # Left Axis: Wheel Angular Velocities
+    axs[3].plot(t, om_w["RL"], label="w_RL")
+    axs[3].plot(t, om_w["RR"], label="w_RR")
+    axs[3].plot(t, om_w["FL"], label="w_FL")
+    axs[3].plot(t, om_w["FR"], label="w_FR")
+    axs[3].set_ylabel("Wheel Omega [rad/s]")
     axs[3].set_xlabel("time [s]")
     axs[3].grid(True)
-    axs[3].legend(ncols=3)
+    axs[3].legend(loc="upper left", ncols=4)
+
+    # Right Axis: Steering Angles
+    ax_steer = axs[3].twinx()
+    ax_steer.plot(t, np.rad2deg(delta["FL"]), "--", color="purple", label="delta_FL [deg]")
+    ax_steer.plot(t, np.rad2deg(delta["FR"]), "--", color="brown", label="delta_FR [deg]")
+    ax_steer.set_ylabel("Steering [deg]")
+    ax_steer.legend(loc="upper right")
 
     plt.tight_layout()
     plt.show()
@@ -418,11 +425,16 @@ if __name__ == "__main__":
     # 1. Create the animation object
     ani = animate(sim, interval_ms=20, trail=True)
 
-    # 2. SAVE THE VIDEO HERE ----------------------------------
-    print("Saving video...")
-    ani.save("kinematics_sim_animation.mp4", writer="ffmpeg", fps=60)
-    print("Video saved.")
-    # ---------------------------------------------------------
-
+    # # 2. SAVE THE VIDEO HERE ----------------------------------
+    # print("Saving video...")
+    # try:
+    #     ani.save("kinematics_sim_animation.mp4", writer="ffmpeg", fps=60)
+    #     print("Video saved successfully!")
+    # except Exception as e:
+    #     print(f"Could not save MP4 (do you have FFmpeg installed?). Error: {e}")
+    #     print("Attempting to save as GIF instead...")
+    #     ani.save("kinematics_sim_animation.gif", writer="pillow", fps=60)
+    #     print("GIF saved successfully!")
+    
     # 3. Show static plots
     make_plots(sim)
