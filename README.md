@@ -1,24 +1,24 @@
-#Ackermann Drive Simulation**A high-fidelity Python simulation of a Double-Track Ackermann vehicle featuring Rigid Body Dynamics and Sliding Mode Control (SMC).**
+# Ackermann Drive Simulation
+
+**A high-fidelity Python simulation of a Double-Track Ackermann vehicle featuring Rigid Body Dynamics and Sliding Mode Control (SMC).**
 
 This repository implements a complete robotics stack—from Motion Planning to Control to Dynamics simulation—verifying the stability of a vehicle tracking a Cubic Spline path under realistic physical constraints.
 
----
+## 📂 Repository Structure
 
-##📂 Repository Structure```text
+```text
 ackermann-drive-simulation/
 ├── Controller/
 │   └── controller_sim.py    # Main Sliding Mode Controller (SMC) implementation
 ├── Dynamics/
-│   └── dynamics_sim.py      # Rigid Body physics engine & tire models
+│   └── ...                  # Rigid Body physics engine & tire models
 ├── Kinematics/
 │   └── kinematics_sim.py    # Inverse kinematics & geometry validation
 ├── Planner/
-│   └── planner_sim          # Path generation (Cubic Spline interpolation)
+│   └── ...                  # Path generation (Cubic Spline interpolation)
 └── README.md
 
 ```
-
----
 
 ##🚀 Key Features* **Double-Track Ackermann Geometry:** Unlike simplified bicycle models, this project models all four wheels independently, accounting for track width (T) and calculating unique steering angles for inner/outer wheels.
 * **Rigid Body Dynamics Engine:** Simulates the vehicle using Newton-Euler equations, accounting for:
@@ -33,8 +33,6 @@ ackermann-drive-simulation/
 
 
 * **Stability Analysis:** Includes real-time logging of Lyapunov function candidates to empirically verify system stability.
-
----
 
 ##🛠️ System Requirements###Prerequisites* **OS:** Linux (Recommended), Windows, or macOS.
 * **Python:** 3.8+
@@ -53,8 +51,6 @@ pip install numpy matplotlib scipy
 sudo apt install ffmpeg
 
 ```
-
----
 
 ##💻 Usage###1. Run the Full Control SimulationTo see the robot track a Figure-8 path with the Sliding Mode Controller:
 
@@ -76,8 +72,6 @@ python Kinematics/kinematics_sim.py
 
 ```
 
----
-
 ##📚 Technical Details###1. Kinematics (Double-Track)The system maps a desired inertial velocity [\dot{X}, \dot{Y}, \dot{\psi}]^T to individual wheel angular velocities (\omega) using the Jacobian matrix for a double-track model. This ensures correct differential steering where outer wheels spin faster than inner wheels during turns.
 
 ###2. Dynamics (Newton-Euler)The physics engine solves the following equation of motion at every time step (dt=0.01s):
@@ -92,17 +86,15 @@ python Kinematics/kinematics_sim.py
 
 
 
----
-
 ##📊 Results & ValidationThe simulation outputs comprehensive plots to validate performance:
 
 1. **Trajectory:** Visual confirmation of path tracking (e.g., Figure-8).
 2. **Lyapunov Stability:** Plots of V = \frac{1}{2}s^2 demonstrating that error energy decays to zero.
-3. **Actuation:** verification that steering and torque commands remain within physical saturation limits (\pm 45^\circ, 8 Nm).
-
----
+3. **Actuation:** Verification that steering and torque commands remain within physical saturation limits (\pm 45^\circ, 8 Nm).
 
 ##📝 LicenseThis project is open-source. Feel free to use it for educational or research purposes.
 
 **Author:** Ronish Nadar
 **GitHub:** [https://github.com/RonishNadar/ackermann-drive-simulation](https://github.com/RonishNadar/ackermann-drive-simulation)
+
+```
