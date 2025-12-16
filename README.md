@@ -20,7 +20,7 @@ ackermann-drive-simulation/
 
 ```
 
-##🚀 Key Features* **Double-Track Ackermann Geometry:** Unlike simplified bicycle models, this project models all four wheels independently, accounting for track width (T) and calculating unique steering angles for inner/outer wheels.
+## 🚀 Key Features* **Double-Track Ackermann Geometry:** Unlike simplified bicycle models, this project models all four wheels independently, accounting for track width (T) and calculating unique steering angles for inner/outer wheels.
 * **Rigid Body Dynamics Engine:** Simulates the vehicle using Newton-Euler equations, accounting for:
 * Inertia matrices (\mathbf{M}) and Coriolis forces (\mathbf{C}(\nu)).
 * Linear/Rotational Damping (Air drag & friction).
@@ -34,11 +34,11 @@ ackermann-drive-simulation/
 
 * **Stability Analysis:** Includes real-time logging of Lyapunov function candidates to empirically verify system stability.
 
-##🛠️ System Requirements###Prerequisites* **OS:** Linux (Recommended), Windows, or macOS.
+## 🛠️ System Requirements###Prerequisites* **OS:** Linux (Recommended), Windows, or macOS.
 * **Python:** 3.8+
 * **FFmpeg:** Required if you want to save animations as `.mp4`.
 
-###Python DependenciesInstall the required libraries using pip:
+### Python DependenciesInstall the required libraries using pip:
 
 ```bash
 pip install numpy matplotlib scipy
@@ -52,7 +52,7 @@ sudo apt install ffmpeg
 
 ```
 
-##💻 Usage###1. Run the Full Control SimulationTo see the robot track a Figure-8 path with the Sliding Mode Controller:
+## 💻 Usage ### 1. Run the Full Control SimulationTo see the robot track a Figure-8 path with the Sliding Mode Controller:
 
 ```bash
 python Controller/controller_sim.py
@@ -65,21 +65,21 @@ python Controller/controller_sim.py
 * `controller_sim_animation.mp4`: Saved video of the run.
 * **Stability Plots:** Graphs showing the decay of tracking errors and Lyapunov candidates.
 
-###2. Run the Kinematics ValidationTo verify the Inverse Kinematics mapping (Global Velocity \to Wheel Speeds):
+### 2. Run the Kinematics ValidationTo verify the Inverse Kinematics mapping (Global Velocity \to Wheel Speeds):
 
 ```bash
 python Kinematics/kinematics_sim.py
 
 ```
 
-##📚 Technical Details###1. Kinematics (Double-Track)The system maps a desired inertial velocity [\dot{X}, \dot{Y}, \dot{\psi}]^T to individual wheel angular velocities (\omega) using the Jacobian matrix for a double-track model. This ensures correct differential steering where outer wheels spin faster than inner wheels during turns.
+## 📚 Technical Details###1. Kinematics (Double-Track)The system maps a desired inertial velocity [\dot{X}, \dot{Y}, \dot{\psi}]^T to individual wheel angular velocities (\omega) using the Jacobian matrix for a double-track model. This ensures correct differential steering where outer wheels spin faster than inner wheels during turns.
 
-###2. Dynamics (Newton-Euler)The physics engine solves the following equation of motion at every time step (dt=0.01s):
+### 2. Dynamics (Newton-Euler)The physics engine solves the following equation of motion at every time step (dt=0.01s):
 
 * \boldsymbol{\tau}_{tires}: Derived from a linear tire model F_y = -C_{\alpha}\alpha.
 * \mathbf{D}\mathbf{\nu}: Linearly proportional damping (drag).
 
-###3. Control Strategy (SMC)The controller drives the robot along a path defined by a Cubic Spline.
+### 3. Control Strategy (SMC)The controller drives the robot along a path defined by a Cubic Spline.
 
 * **Sliding Surface:** s_{lat} = e_{\psi} + \lambda e_y
 * **Control Law:** A continuous approximation of the switching law to prevent high-frequency jitter (chattering):
@@ -96,5 +96,3 @@ python Kinematics/kinematics_sim.py
 
 **Author:** Ronish Nadar
 **GitHub:** [https://github.com/RonishNadar/ackermann-drive-simulation](https://github.com/RonishNadar/ackermann-drive-simulation)
-
-```
