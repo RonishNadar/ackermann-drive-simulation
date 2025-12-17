@@ -88,13 +88,15 @@ The controller drives the robot along a path defined by a B-Spline.
 
 
 
-## 📊 Results & ValidationThe simulation outputs comprehensive plots to validate performance:
+## 📊 Results & Validation
+The simulation outputs comprehensive plots to validate performance:
 
 1. **Trajectory:** Visual confirmation of path tracking (e.g., Figure-8).
 2. **Lyapunov Stability:** Plots of $V = \frac{1}{2}s^2$ demonstrating that error energy decays to zero.
 3. **Actuation:** Verification that steering and torque commands remain within physical saturation limits $(\pm 45^\circ, 8 Nm)$.
 
-## 📝 LicenseThis project is open-source. Feel free to use it for educational or research purposes.
+## 📝 License
+This project is open-source. Feel free to use it for educational or research purposes.
 
 **Author:** Ronish Nadar
 **GitHub:** [https://github.com/RonishNadar/ackermann-drive-simulation](https://github.com/RonishNadar/ackermann-drive-simulation)
