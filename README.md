@@ -35,7 +35,7 @@ ackermann-drive-simulation/
 * **Stability Analysis:** Includes real-time logging of Lyapunov function candidates to empirically verify system stability.
 
 ## 🛠️ System Requirements
-###Prerequisites
+### Prerequisites
 * **OS:** Linux (Recommended), Windows, or macOS.
 * **Python:** 3.8+
 * **FFmpeg:** Required if you want to save animations as `.mp4`.
